@@ -7,6 +7,7 @@ import Customers from './pages/Customers';
 import EmailTemplates from './pages/EmailTemplates';
 import Enquiries from './pages/Enquiries';
 import ReportingSettings from './pages/ReportingSettings';
+import TemplateEditor from './pages/TemplateEditor';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="/admin" element={<Admin />} />
             <Route path="/customers" element={<Customers />} />
             <Route path="/templates" element={<EmailTemplates />} />
+            <Route path="/templates/:id" element={<TemplateEditor />} />
             <Route path="/enquiries" element={<Enquiries />} />
             <Route path="/reporting" element={<ReportingSettings />} />
           </Route>

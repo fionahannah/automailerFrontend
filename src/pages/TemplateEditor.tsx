@@ -1,30 +1,9 @@
-import { useEffect, useState, useRef, type FormEvent } from 'react';
+import { useEffect, useState, useRef, useCallback, type FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import GjsEditor from '@grapesjs/react';
-import grapesjs, { type Editor as GjsEditorType } from 'grapesjs';
-import newsletterPresetModule from 'grapesjs-preset-newsletter';
+import EmailEditorModule, { type EditorRef } from 'react-email-editor';
 
-const newsletterPreset = (newsletterPresetModule as any).default || newsletterPresetModule;
-
-// Plugin: override the newsletter preset's 'cell' type to extend 'text',
-// which enables the Rich Text Editor on double-click.
-function editablePlugin(editor: GjsEditorType) {
-  const { Components } = editor;
-
-  Components.addType('cell', {
-    extend: 'text',
-    isComponent: (el: HTMLElement) => el.tagName === 'TD' || el.tagName === 'TH',
-    model: {
-      defaults: {
-        tagName: 'td',
-        draggable: false,
-        droppable: true,
-        editable: true,
-      },
-    },
-  });
-}
-import 'grapesjs/dist/css/grapes.min.css';
+// CJS interop — the default export is wrapped in an object
+const EmailEditor = (EmailEditorModule as any).default || EmailEditorModule;
 import { useAuth } from '../auth/AuthContext';
 import { API_URL } from '../config';
 import { renderTemplate, customerToVars, availableVars, sampleCustomer, type EmailTemplate } from '../templateUtils';
@@ -33,6 +12,15 @@ import './TemplateEditor.css';
 type EditorMode = 'visual' | 'code';
 
 const sampleVars = customerToVars(sampleCustomer);
+
+const mergeTags = availableVars.reduce((acc, v) => {
+  acc[v] = {
+    name: v,
+    value: `{{${v}}}`,
+    sample: sampleVars[v] || v,
+  };
+  return acc;
+}, {} as Record<string, { name: string; value: string; sample: string }>);
 
 function PreviewIframe({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -65,13 +53,14 @@ export default function TemplateEditor() {
   const [templateName, setTemplateName] = useState('');
   const [bodyText, setBodyText] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
+  const [designJson, setDesignJson] = useState<any>(null);
   const [mode, setMode] = useState<EditorMode>('visual');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(!isNew);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [showPreview, setShowPreview] = useState(true);
 
-  const gjsRef = useRef<GjsEditorType | null>(null);
+  const editorRef = useRef<EditorRef>(null);
   const htmlTextareaRef = useRef<HTMLTextAreaElement>(null);
   const previewHtml = renderTemplate(bodyHtml, sampleVars);
 
@@ -91,6 +80,9 @@ export default function TemplateEditor() {
         setTemplateName(t.templateName);
         setBodyText(t.bodyText || '');
         setBodyHtml(t.bodyHtml || '');
+        if (t.designJson) {
+          setDesignJson(JSON.parse(t.designJson));
+        }
       } else {
         showToast('Failed to load template', 'error');
       }
@@ -98,41 +90,59 @@ export default function TemplateEditor() {
     })();
   }, [id, isNew, user]);
 
-  const getHtmlFromGjs = (): string => {
-    if (!gjsRef.current) return bodyHtml;
-    const editor = gjsRef.current;
-    const html = editor.getHtml();
-    const css = editor.getCss();
-    if (css) {
-      return `<style>${css}</style>${html}`;
-    }
-    return html;
-  };
+  const exportHtmlFromEditor = useCallback((): Promise<string> => {
+    return new Promise((resolve) => {
+      const unlayer = editorRef.current?.editor;
+      if (!unlayer) {
+        resolve(bodyHtml);
+        return;
+      }
+      unlayer.exportHtml((data) => {
+        resolve(data.html);
+      });
+    });
+  }, [bodyHtml]);
 
-  const switchMode = (newMode: EditorMode) => {
-    if (mode === 'visual' && gjsRef.current) {
-      setBodyHtml(getHtmlFromGjs());
+  const saveDesignFromEditor = useCallback((): Promise<any> => {
+    return new Promise((resolve) => {
+      const unlayer = editorRef.current?.editor;
+      if (!unlayer) {
+        resolve(null);
+        return;
+      }
+      unlayer.saveDesign((design) => {
+        resolve(design);
+      });
+    });
+  }, []);
+
+  const switchMode = async (newMode: EditorMode) => {
+    if (mode === 'visual') {
+      const html = await exportHtmlFromEditor();
+      setBodyHtml(html);
     }
     setMode(newMode);
   };
 
+  const handleEditorReady = useCallback(() => {
+    const unlayer = editorRef.current?.editor;
+    if (!unlayer) return;
+
+    if (designJson) {
+      unlayer.loadDesign(designJson);
+    }
+
+    // Update preview on changes
+    unlayer.addEventListener('design:updated', () => {
+      unlayer.exportHtml((data) => {
+        setBodyHtml(data.html);
+      });
+    });
+  }, [designJson]);
+
   const insertVariable = (v: string) => {
     const tag = `{{${v}}}`;
-    if (mode === 'visual' && gjsRef.current) {
-      const editor = gjsRef.current;
-      const rte = editor.RichTextEditor;
-      // If actively editing text inside a component, insert at cursor
-      if (rte.globalRte && rte.globalRte.el) {
-        rte.globalRte.insertHTML(tag);
-      } else {
-        // Not in text editing mode — select a text component first
-        const selected = editor.getSelected();
-        if (selected) {
-          const currentContent = selected.get('content') || '';
-          selected.set('content', currentContent + tag);
-        }
-      }
-    } else if (mode === 'code' && htmlTextareaRef.current) {
+    if (mode === 'code' && htmlTextareaRef.current) {
       const textarea = htmlTextareaRef.current;
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
@@ -143,19 +153,27 @@ export default function TemplateEditor() {
         textarea.focus();
       });
     }
+    // In visual mode, Unlayer has its own merge tag UI — no external button needed
   };
 
   const handleSave = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!user) return;
 
-    const currentHtml = mode === 'visual' ? getHtmlFromGjs() : bodyHtml;
+    let currentHtml = bodyHtml;
+    let currentDesign = null;
+
+    if (mode === 'visual') {
+      currentHtml = await exportHtmlFromEditor();
+      currentDesign = await saveDesignFromEditor();
+    }
 
     setSaving(true);
     const payload = {
       templateName,
       bodyText: bodyText || '',
       bodyHtml: currentHtml || '',
+      designJson: currentDesign ? JSON.stringify(currentDesign) : null,
     };
 
     const url = isNew
@@ -183,15 +201,6 @@ export default function TemplateEditor() {
       console.error('Save failed:', res.status, errorText);
       showToast(`Failed to save template: ${res.status}`, 'error');
     }
-  };
-
-  const handleEditorReady = (editor: GjsEditorType) => {
-    gjsRef.current = editor;
-
-    editor.on('update', () => {
-      const html = getHtmlFromGjs();
-      setBodyHtml(html);
-    });
   };
 
   if (!user || user.role !== 'Admin') {
@@ -238,36 +247,42 @@ export default function TemplateEditor() {
         </button>
       </div>
 
-      <div className="te-variable-bar">
-        <span className="hint-label">Insert variables:</span>
-        {availableVars.map(v => (
-          <code
-            key={v}
-            className="var-chip"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => insertVariable(v)}
-          >
-            {`{{${v}}}`}
-          </code>
-        ))}
-      </div>
+      {mode === 'code' && (
+        <div className="te-variable-bar">
+          <span className="hint-label">Insert variables:</span>
+          {availableVars.map(v => (
+            <code
+              key={v}
+              className="var-chip"
+              onClick={() => insertVariable(v)}
+            >
+              {`{{${v}}}`}
+            </code>
+          ))}
+        </div>
+      )}
 
       <div className="te-main">
         <div className="te-editor-pane">
           {mode === 'visual' ? (
-            <GjsEditor
-              className="te-gjs-editor"
-              grapesjs={grapesjs}
-              plugins={[newsletterPreset, editablePlugin]}
-              onReady={handleEditorReady}
-              options={{
-                height: '100%',
-                storageManager: false,
-                undoManager: { trackSelection: false },
-                components: bodyHtml || '<p>Start editing your email template...</p>',
-                style: '',
-              }}
-            />
+            <div className="te-unlayer-wrapper">
+              <EmailEditor
+                ref={editorRef}
+                onReady={handleEditorReady}
+                minHeight="100%"
+                options={{
+                  mergeTags,
+                  features: {
+                    textEditor: {
+                      spellChecker: true,
+                    },
+                  },
+                  appearance: {
+                    theme: 'modern_dark',
+                  },
+                }}
+              />
+            </div>
           ) : (
             <div className="te-code-body">
               <div className="te-code-field te-code-html">

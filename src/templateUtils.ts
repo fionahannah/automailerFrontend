@@ -4,6 +4,7 @@ export interface EmailTemplate {
   templateName: string;
   bodyText: string | null;
   bodyHtml: string | null;
+  designJson: string | null;
 }
 
 export interface Customer {

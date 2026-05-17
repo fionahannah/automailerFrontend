@@ -204,27 +204,14 @@
   letter-spacing: 0;
 }
 
-/* GrapeJS editor */
-.te-gjs-editor {
+/* Unlayer editor */
+.te-unlayer-wrapper {
   flex: 1;
   overflow: hidden;
 }
 
-.te-gjs-editor .gjs-one-bg {
-  background-color: #1a1a2e;
-}
-
-.te-gjs-editor .gjs-two-color {
-  color: #e0e0e0;
-}
-
-.te-gjs-editor .gjs-three-bg {
-  background-color: #0f0f23;
-}
-
-.te-gjs-editor .gjs-four-color,
-.te-gjs-editor .gjs-four-color-h:hover {
-  color: #4fc3f7;
+.te-unlayer-wrapper > div {
+  height: 100% !important;
 }
 
 /* Code editor body */

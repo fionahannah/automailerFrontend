@@ -244,6 +244,7 @@ export default function TemplateEditor() {
           <code
             key={v}
             className="var-chip"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => insertVariable(v)}
           >
             {`{{${v}}}`}
